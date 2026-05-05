@@ -2,11 +2,16 @@ const express = require('express');
 const multer = require('multer');
 const { Telegraf } = require('telegraf');
 const os = require('os');
+const fs = require('fs'); // Thêm module quản lý File System
 
 const app = express();
+
+// 🚀 TỐI ƯU SIÊU CHỊU TẢI: Lưu tạm vào Ổ cứng (Disk) thay vì RAM
 const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 } 
+  dest: os.tmpdir(), // Sử dụng thư mục tạm của hệ điều hành (dung lượng cực lớn)
+  limits: { 
+    fileSize: 20 * 1024 * 1024 // Giới hạn 20MB (ảnh nén ở Flutter chỉ vài trăm KB là dư sức)
+  } 
 });
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -37,15 +42,34 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'Không tìm thấy tệp' });
+
+    // 🚀 Dùng ReadStream: Đọc từng mảnh nhỏ từ ổ cứng và bơm thẳng sang Telegram
+    const fileStream = fs.createReadStream(file.path);
+
     const result = await bot.telegram.sendDocument(CHANNEL_ID, {
-      source: file.buffer,
+      source: fileStream,
       filename: file.originalname
     });
+
+    // 🚀 Dọn rác tức thì: Xóa ngay file tạm trên ổ cứng sau khi Telegram nhận xong
+    fs.unlink(file.path, (err) => {
+        if (err) console.error('Lỗi khi xóa file tạm:', err);
+    });
+
     const fileId = result.document ? result.document.file_id : result.photo[result.photo.length - 1].file_id;
     const fileLink = await bot.telegram.getFileLink(fileId);
+    
     res.json({ success: true, url: fileLink.href, file_id: fileId });
+    
   } catch (error) {
-    res.status(500).json({ error: 'Lỗi máy chủ' });
+    console.error('Lỗi máy chủ:', error);
+    
+    // Kể cả khi có lỗi cũng phải dọn rác để chống tràn ổ cứng
+    if (req.file && req.file.path) {
+        fs.unlink(req.file.path, () => {});
+    }
+    
+    res.status(500).json({ error: 'Hệ thống đang quá tải, vui lòng thử lại sau.' });
   }
 });
 
@@ -120,7 +144,7 @@ app.get('/', (req, res) => {
                     const logBox = document.getElementById('logBox');
                     const newLine = document.createElement('div');
                     newLine.className = 'log-line';
-                    newLine.innerHTML = '<span style="color:#475569">[' + data.timestamp + ']</span> <span>Đang duy trì kết nối ổn định...</span>';
+                    newLine.innerHTML = '<span style="color:#475569">[' + data.timestamp + ']</span> <span>Đang duy trì luồng dữ liệu (Stream) ổn định...</span>';
                     
                     if (logBox.children.length > 2) logBox.removeChild(logBox.children[0]);
                     logBox.appendChild(newLine);
